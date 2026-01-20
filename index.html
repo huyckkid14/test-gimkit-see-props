@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>AI ZIP Image Similarity (Progress + ETA + Filename)</title>
+<title>AI ZIP Image Similarity (Progress + ETA + Prop Names)</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
@@ -61,13 +61,16 @@ img{
 </head>
 <body>
 
-<h2>AI Image Similarity (Neural Network + ZIP)</h2>
+<h2>AI Image Similarity (Neural Network + ZIP + TXT Map)</h2>
 
 Target image:
 <input type="file" id="img1Input" accept="image/*">
 
 Props ZIP:
 <input type="file" id="zipInput" accept=".zip">
+
+Props TXT:
+<input type="file" id="txtInput" accept=".txt">
 
 <div>
   <img id="img1Preview">
@@ -88,6 +91,7 @@ Props ZIP:
 let model;
 let img1Ready = false;
 let propsImages = [];
+let propNameMap = {}; // filename -> prop name
 
 const img1Preview = document.getElementById("img1Preview");
 const result = document.getElementById("result");
@@ -99,7 +103,7 @@ const progressText = document.getElementById("progressText");
 
 async function loadModel() {
   model = await mobilenet.load({version:2, alpha:1.0});
-  result.textContent = "Model loaded. Upload target image and ZIP.";
+  result.textContent = "Model loaded. Upload target image, ZIP, and TXT.";
 }
 loadModel();
 
@@ -139,6 +143,7 @@ function resetProgress(){
   bestMatch.innerHTML = "";
 }
 
+/* TARGET IMAGE */
 document.getElementById("img1Input").addEventListener("change", e => {
   const file = e.target.files[0];
   if(!file) return;
@@ -156,6 +161,29 @@ document.getElementById("img1Input").addEventListener("change", e => {
   reader.readAsDataURL(file);
 });
 
+/* TXT MAP UPLOAD */
+document.getElementById("txtInput").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  if(!file) return;
+
+  const text = await file.text();
+  propNameMap = {};
+
+  text.split("\n").forEach(line => {
+    // filepath: Gimkit Props/Sign_2.png  Prop name: Wooden Sign
+    const match = line.match(/Gimkit Props\/(.+?)\s+Prop name:\s+(.+)/);
+    if (!match) return;
+
+    const filename = match[1].trim();
+    const propName = match[2].trim();
+    propNameMap[filename] = propName;
+  });
+
+  result.textContent = `Loaded ${Object.keys(propNameMap).length} prop names from TXT.`;
+  tryCompare();
+});
+
+/* ZIP UPLOAD */
 document.getElementById("zipInput").addEventListener("change", async e => {
   const file = e.target.files[0];
   if(!file) return;
@@ -170,8 +198,9 @@ document.getElementById("zipInput").addEventListener("change", async e => {
     if (name.match(/\.(png|jpg|jpeg|webp)$/i)) {
       const blob = await zip.files[name].async("blob");
       const url = URL.createObjectURL(blob);
+      const cleanName = name.split("/").pop();
       propsImages.push({
-        name: name,
+        name: cleanName,
         url: url
       });
     }
@@ -182,7 +211,7 @@ document.getElementById("zipInput").addEventListener("change", async e => {
 });
 
 async function tryCompare() {
-  if (!img1Ready || !model || propsImages.length === 0) return;
+  if (!img1Ready || !model || propsImages.length === 0 || Object.keys(propNameMap).length === 0) return;
 
   progressWrap.style.display = "block";
   result.textContent = "Analyzing target image…";
@@ -198,7 +227,6 @@ async function tryCompare() {
 
   for (let i = 0; i < total; i++) {
     const { name, url } = propsImages[i];
-    const iterStart = performance.now();
 
     const img = new Image();
     img.src = url;
@@ -228,14 +256,17 @@ async function tryCompare() {
       Estimated remaining: <b>${formatTime(remaining)}</b><br>
       Currently analyzing: <b>${name}</b><br>
       Best so far: <b>${(bestScore * 100).toFixed(2)}%</b>
-      <div class="small">ETA will stabilize after a few dozen images.</div>
+      <div class="small">ETA stabilizes after some images.</div>
     `;
   }
+
+  const propLabel = propNameMap[bestName] || "(Unknown Prop)";
 
   result.textContent = `Best match: ${(bestScore * 100).toFixed(2)}%`;
   bestMatch.innerHTML = `
     <div style="margin-top:10px;font-size:16px;">
-      <b>Best match file:</b> ${bestName}
+      <b>Prop name:</b> ${propLabel}<br>
+      <span class="small">File: ${bestName}</span>
     </div>
     <img src="${bestImage}">
   `;
