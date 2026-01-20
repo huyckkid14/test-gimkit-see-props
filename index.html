@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>AI ZIP Image Similarity (Progress + ETA)</title>
+<title>AI ZIP Image Similarity (Progress + ETA + Filename)</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
@@ -27,35 +27,35 @@ img{
   margin-top:20px;
 }
 
-/* progress UI */
+/* Progress UI */
 #progressWrap{
-  width: 80%;
-  max-width: 700px;
-  margin: 18px auto 10px;
+  width:80%;
+  max-width:700px;
+  margin:18px auto;
+  display:none;
 }
 #progressContainer{
-  width: 100%;
-  height: 20px;
-  background: #333;
-  border-radius: 10px;
-  overflow: hidden;
-  border: 1px solid #444;
+  width:100%;
+  height:20px;
+  background:#333;
+  border-radius:10px;
+  overflow:hidden;
+  border:1px solid #444;
 }
 #progressBar{
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #00ff99, #00ccff);
-  transition: width 0.15s linear;
+  height:100%;
+  width:0%;
+  background:linear-gradient(90deg,#00ff99,#00ccff);
+  transition:width 0.15s linear;
 }
 #progressText{
-  margin-top: 10px;
-  font-size: 15px;
-  color: #ddd;
-  line-height: 1.35;
+  margin-top:10px;
+  font-size:14px;
+  color:#ddd;
 }
 .small{
-  font-size: 13px;
-  color: #aaa;
+  font-size:12px;
+  color:#aaa;
 }
 </style>
 </head>
@@ -75,7 +75,7 @@ Props ZIP:
 
 <div id="result">Loading AI model...</div>
 
-<div id="progressWrap" style="display:none;">
+<div id="progressWrap">
   <div id="progressContainer">
     <div id="progressBar"></div>
   </div>
@@ -126,26 +126,24 @@ async function getEmbedding(img) {
 
 function formatTime(seconds) {
   seconds = Math.max(0, Math.round(seconds));
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
+  const m = Math.floor(seconds / 60);
   const s = seconds % 60;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
 }
 
-function resetProgress() {
+function resetProgress(){
   progressWrap.style.display = "none";
   progressBar.style.width = "0%";
   progressText.textContent = "";
+  bestMatch.innerHTML = "";
 }
 
 document.getElementById("img1Input").addEventListener("change", e => {
   const file = e.target.files[0];
-  if (!file) return;
+  if(!file) return;
 
   resetProgress();
-  bestMatch.innerHTML = "";
 
   const reader = new FileReader();
   reader.onload = () => {
@@ -160,20 +158,22 @@ document.getElementById("img1Input").addEventListener("change", e => {
 
 document.getElementById("zipInput").addEventListener("change", async e => {
   const file = e.target.files[0];
-  if (!file) return;
+  if(!file) return;
 
   resetProgress();
-  bestMatch.innerHTML = "";
+  result.textContent = "Reading ZIP…";
 
-  result.textContent = "Reading ZIP… (this can take a bit)";
   const zip = await JSZip.loadAsync(file);
-
   propsImages = [];
+
   for (let name in zip.files) {
     if (name.match(/\.(png|jpg|jpeg|webp)$/i)) {
       const blob = await zip.files[name].async("blob");
       const url = URL.createObjectURL(blob);
-      propsImages.push(url);
+      propsImages.push({
+        name: name,
+        url: url
+      });
     }
   }
 
@@ -184,31 +184,24 @@ document.getElementById("zipInput").addEventListener("change", async e => {
 async function tryCompare() {
   if (!img1Ready || !model || propsImages.length === 0) return;
 
-  bestMatch.innerHTML = "";
   progressWrap.style.display = "block";
-  progressBar.style.width = "0%";
-  progressText.innerHTML = `Starting…<div class="small">Tip: don’t switch tabs too much; it can slow down timers.</div>`;
+  result.textContent = "Analyzing target image…";
 
-  result.textContent = "Analyzing target image with AI…";
   const targetEmb = await getEmbedding(img1Preview);
 
   let bestScore = -1;
   let bestImage = null;
+  let bestName = "";
 
   const total = propsImages.length;
   const startTime = performance.now();
 
-  // for a smoother ETA, keep a moving average of recent per-image times
-  const recentTimes = [];
-  const RECENT_WINDOW = 25;
-
   for (let i = 0; i < total; i++) {
+    const { name, url } = propsImages[i];
     const iterStart = performance.now();
 
-    const src = propsImages[i];
-
     const img = new Image();
-    img.src = src;
+    img.src = url;
     await new Promise(r => img.onload = r);
 
     const emb = await getEmbedding(img);
@@ -216,43 +209,36 @@ async function tryCompare() {
 
     if (score > bestScore) {
       bestScore = score;
-      bestImage = src;
+      bestImage = url;
+      bestName = name;
     }
-
-    // update timing + progress
-    const iterMs = performance.now() - iterStart;
-    recentTimes.push(iterMs);
-    if (recentTimes.length > RECENT_WINDOW) recentTimes.shift();
 
     const done = i + 1;
     const pct = (done / total) * 100;
-    progressBar.style.width = pct.toFixed(2) + "%";
+    progressBar.style.width = pct + "%";
 
-    const elapsedSec = (performance.now() - startTime) / 1000;
-
-    // moving average seconds per image (more stable than overall average)
-    const avgIterMs = recentTimes.reduce((a,b)=>a+b,0) / recentTimes.length;
-    const avgSecPer = avgIterMs / 1000;
-
-    const remaining = total - done;
-    const etaSec = remaining * avgSecPer;
+    const elapsed = (performance.now() - startTime) / 1000;
+    const avgPer = elapsed / done;
+    const remaining = (total - done) * avgPer;
 
     result.textContent = `Analyzing ${done}/${total}…`;
     progressText.innerHTML = `
       Progress: <b>${pct.toFixed(2)}%</b><br>
-      Elapsed: <b>${formatTime(elapsedSec)}</b><br>
-      Estimated remaining: <b>${formatTime(etaSec)}</b><br>
+      Elapsed: <b>${formatTime(elapsed)}</b><br>
+      Estimated remaining: <b>${formatTime(remaining)}</b><br>
+      Currently analyzing: <b>${name}</b><br>
       Best so far: <b>${(bestScore * 100).toFixed(2)}%</b>
-      <div class="small">ETA is an estimate and will jump around early on.</div>
+      <div class="small">ETA will stabilize after a few dozen images.</div>
     `;
-
-    // optional: let the browser breathe a tiny bit
-    // await new Promise(r => setTimeout(r, 0));
   }
 
   result.textContent = `Best match: ${(bestScore * 100).toFixed(2)}%`;
-  progressText.innerHTML += `<div class="small">Done.</div>`;
-  bestMatch.innerHTML = `<img src="${bestImage}">`;
+  bestMatch.innerHTML = `
+    <div style="margin-top:10px;font-size:16px;">
+      <b>Best match file:</b> ${bestName}
+    </div>
+    <img src="${bestImage}">
+  `;
 }
 </script>
 
