@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>AI ZIP Image Similarity (Progress + ETA + Prop Names)</title>
+<title>AI ZIP Image Similarity (Progress + ETA + Prop Names + px-ignore)</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
@@ -198,7 +198,13 @@ document.getElementById("zipInput").addEventListener("change", async e => {
     if (name.match(/\.(png|jpg|jpeg|webp)$/i)) {
       const blob = await zip.files[name].async("blob");
       const url = URL.createObjectURL(blob);
-      const cleanName = name.split("/").pop();
+
+      // Remove folders AND ignore px sizes like 120px-, 240px-
+      const cleanName = name
+        .split("/")
+        .pop()
+        .replace(/^\d+px-/, "");
+
       propsImages.push({
         name: cleanName,
         url: url
