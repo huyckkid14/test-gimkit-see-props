@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Compare Two Uploaded Images</title>
+<title>AI Image Similarity</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+
 <style>
 body{
   background:#111;
@@ -11,23 +14,21 @@ body{
   text-align:center;
   padding:20px;
 }
-input{
-  margin:10px;
-}
+input{ margin:10px; }
 img{
   max-width:200px;
   border:2px solid #444;
   margin:10px;
 }
 #result{
-  font-size:20px;
+  font-size:22px;
   margin-top:20px;
 }
 </style>
 </head>
 <body>
 
-<h2>Upload Two Images to Compare</h2>
+<h2>AI Image Similarity (Neural Network)</h2>
 
 <input type="file" id="img1Input" accept="image/*">
 <input type="file" id="img2Input" accept="image/*">
@@ -37,67 +38,24 @@ img{
   <img id="img2Preview">
 </div>
 
-<div id="result"></div>
+<div id="result">Loading AI model...</div>
 
 <script>
-const img1Input = document.getElementById("img1Input");
-const img2Input = document.getElementById("img2Input");
+let model;
+let img1Ready = false;
+let img2Ready = false;
+
 const img1Preview = document.getElementById("img1Preview");
 const img2Preview = document.getElementById("img2Preview");
 const result = document.getElementById("result");
 
-let img1Loaded = false;
-let img2Loaded = false;
-
-function getHash(img) {
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  canvas.width = 8;
-  canvas.height = 8;
-
-  ctx.drawImage(img, 0, 0, 8, 8);
-  const data = ctx.getImageData(0,0,8,8).data;
-
-  let gray = [];
-  for(let i=0;i<data.length;i+=4){
-    gray.push((data[i] + data[i+1] + data[i+2]) / 3);
-  }
-
-  const avg = gray.reduce((a,b)=>a+b) / gray.length;
-  return gray.map(v => v > avg ? 1 : 0);
+async function loadModel() {
+  model = await mobilenet.load({version:2, alpha:1.0});
+  result.textContent = "Model loaded. Upload two images.";
 }
+loadModel();
 
-function hashDistance(h1, h2) {
-  let diff = 0;
-  for(let i=0;i<h1.length;i++){
-    if(h1[i] !== h2[i]) diff++;
-  }
-  return diff;
-}
-
-function compareIfReady() {
-  if (!img1Loaded || !img2Loaded) return;
-
-  const hash1 = getHash(img1Preview);
-  const hash2 = getHash(img2Preview);
-
-  const distance = hashDistance(hash1, hash2);
-
-  if(distance < 10){
-    result.textContent = `Very similar (distance: ${distance})`;
-    result.style.color = "lime";
-  } 
-  else if(distance < 20){
-    result.textContent = `Somewhat similar (distance: ${distance})`;
-    result.style.color = "orange";
-  } 
-  else {
-    result.textContent = `Different images (distance: ${distance})`;
-    result.style.color = "red";
-  }
-}
-
-function loadImage(input, preview, flagSetter) {
+function loadImage(input, preview, flagSetter){
   input.addEventListener("change", () => {
     const file = input.files[0];
     if(!file) return;
@@ -114,9 +72,59 @@ function loadImage(input, preview, flagSetter) {
   });
 }
 
-loadImage(img1Input, img1Preview, v => img1Loaded = v);
-loadImage(img2Input, img2Preview, v => img2Loaded = v);
+function cosineSimilarity(a, b) {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
 
+async function getEmbedding(img) {
+  const tensor = tf.browser.fromPixels(img)
+    .resizeNearestNeighbor([224,224])
+    .toFloat()
+    .expandDims();
+
+  const embedding = model.infer(tensor, true);
+  const data = await embedding.data();
+  tf.dispose([tensor, embedding]);
+  return data;
+}
+
+async function compareIfReady() {
+  if (!img1Ready || !img2Ready || !model) return;
+
+  result.textContent = "Analyzing images with AI...";
+
+  const emb1 = await getEmbedding(img1Preview);
+  const emb2 = await getEmbedding(img2Preview);
+
+  const similarity = cosineSimilarity(emb1, emb2);
+
+  // similarity ranges roughly 0 → 1
+  if(similarity > 0.9){
+    result.textContent = `Almost identical (${(similarity*100).toFixed(2)}%)`;
+    result.style.color = "lime";
+  }
+  else if(similarity > 0.75){
+    result.textContent = `Very similar (${(similarity*100).toFixed(2)}%)`;
+    result.style.color = "lightgreen";
+  }
+  else if(similarity > 0.5){
+    result.textContent = `Somewhat similar (${(similarity*100).toFixed(2)}%)`;
+    result.style.color = "orange";
+  }
+  else{
+    result.textContent = `Different images (${(similarity*100).toFixed(2)}%)`;
+    result.style.color = "red";
+  }
+}
+
+loadImage(img1Input, img1Preview, v => img1Ready = v);
+loadImage(img2Input, img2Preview, v => img2Ready = v);
 </script>
 
 </body>
