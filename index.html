@@ -2,9 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>AI Image Similarity</title>
+<title>AI ZIP Image Similarity (Browser Killer Edition)</title>
+
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
 <style>
 body{
@@ -28,58 +30,44 @@ img{
 </head>
 <body>
 
-<h2>AI Image Similarity (Neural Network)</h2>
+<h2>AI Image Similarity (Neural Network + ZIP)</h2>
 
+Target image:
 <input type="file" id="img1Input" accept="image/*">
-<input type="file" id="img2Input" accept="image/*">
+
+Props ZIP:
+<input type="file" id="zipInput" accept=".zip">
 
 <div>
   <img id="img1Preview">
-  <img id="img2Preview">
 </div>
 
 <div id="result">Loading AI model...</div>
+<div id="bestMatch"></div>
 
 <script>
 let model;
 let img1Ready = false;
-let img2Ready = false;
+let propsImages = [];
 
 const img1Preview = document.getElementById("img1Preview");
-const img2Preview = document.getElementById("img2Preview");
 const result = document.getElementById("result");
+const bestMatch = document.getElementById("bestMatch");
 
 async function loadModel() {
   model = await mobilenet.load({version:2, alpha:1.0});
-  result.textContent = "Model loaded. Upload two images.";
+  result.textContent = "Model loaded. Upload target image and ZIP.";
 }
 loadModel();
 
-function loadImage(input, preview, flagSetter){
-  input.addEventListener("change", () => {
-    const file = input.files[0];
-    if(!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      preview.src = reader.result;
-      preview.onload = () => {
-        flagSetter(true);
-        compareIfReady();
-      };
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 function cosineSimilarity(a, b) {
-  let dot = 0, normA = 0, normB = 0;
+  let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
   }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
 async function getEmbedding(img) {
@@ -87,44 +75,75 @@ async function getEmbedding(img) {
     .resizeNearestNeighbor([224,224])
     .toFloat()
     .expandDims();
-
-  const embedding = model.infer(tensor, true);
-  const data = await embedding.data();
-  tf.dispose([tensor, embedding]);
+  const emb = model.infer(tensor, true);
+  const data = await emb.data();
+  tf.dispose([tensor, emb]);
   return data;
 }
 
-async function compareIfReady() {
-  if (!img1Ready || !img2Ready || !model) return;
+document.getElementById("img1Input").addEventListener("change", e => {
+  const file = e.target.files[0];
+  const reader = new FileReader();
+  reader.onload = () => {
+    img1Preview.src = reader.result;
+    img1Preview.onload = () => {
+      img1Ready = true;
+      tryCompare();
+    };
+  };
+  reader.readAsDataURL(file);
+});
 
-  result.textContent = "Analyzing images with AI...";
+document.getElementById("zipInput").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  result.textContent = "Reading ZIP… This may freeze.";
 
-  const emb1 = await getEmbedding(img1Preview);
-  const emb2 = await getEmbedding(img2Preview);
+  const zip = await JSZip.loadAsync(file);
+  propsImages = [];
 
-  const similarity = cosineSimilarity(emb1, emb2);
+  for (let name in zip.files) {
+    if (name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+      const blob = await zip.files[name].async("blob");
+      const url = URL.createObjectURL(blob);
+      propsImages.push(url);
+    }
+  }
 
-  // similarity ranges roughly 0 → 1
-  if(similarity > 0.9){
-    result.textContent = `Almost identical (${(similarity*100).toFixed(2)}%)`;
-    result.style.color = "lime";
+  result.textContent = `Loaded ${propsImages.length} images from ZIP.`;
+  tryCompare();
+});
+
+async function tryCompare() {
+  if (!img1Ready || !model || propsImages.length === 0) return;
+
+  result.textContent = "AI analyzing ALL images. Browser may die.";
+
+  const targetEmb = await getEmbedding(img1Preview);
+
+  let bestScore = -1;
+  let bestImage = null;
+
+  let i = 0;
+  for (let src of propsImages) {
+    i++;
+    result.textContent = `Analyzing ${i}/${propsImages.length}…`;
+
+    const img = new Image();
+    img.src = src;
+    await new Promise(r => img.onload = r);
+
+    const emb = await getEmbedding(img);
+    const score = cosineSimilarity(targetEmb, emb);
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestImage = src;
+    }
   }
-  else if(similarity > 0.75){
-    result.textContent = `Very similar (${(similarity*100).toFixed(2)}%)`;
-    result.style.color = "lightgreen";
-  }
-  else if(similarity > 0.5){
-    result.textContent = `Somewhat similar (${(similarity*100).toFixed(2)}%)`;
-    result.style.color = "orange";
-  }
-  else{
-    result.textContent = `Different images (${(similarity*100).toFixed(2)}%)`;
-    result.style.color = "red";
-  }
+
+  result.textContent = `Best match: ${(bestScore * 100).toFixed(2)}%`;
+  bestMatch.innerHTML = `<img src="${bestImage}">`;
 }
-
-loadImage(img1Input, img1Preview, v => img1Ready = v);
-loadImage(img2Input, img2Preview, v => img2Ready = v);
 </script>
 
 </body>
